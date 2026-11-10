@@ -1,0 +1,11 @@
+[ ] Python venv created and packages installed
+[ ] Real timestamped GeneratedLabelledFlows data extracted under data/raw
+[ ] python prepare.py --raw data/raw --stride 10 completed; dates/labels checked
+[ ] python train.py completed; initial_mlp.pt saved
+[ ] python stream.py completed; hybrid_summary.json saved
+[ ] python ablation.py completed
+[ ] python compare.py run (full vs subset setting recorded)
+[ ] python compare_deep.py completed
+[ ] python plot.py completed; plot interpreted
+[ ] For known change-point experiments, compute drift delays and false alarms
+[ ] Run multiple seeds and on independent CSE-CIC-IDS2018/TON_IoT schemas
