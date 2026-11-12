@@ -1,163 +1,149 @@
-# Adaptive Intrusion Detection System — step-by-step Python project
+# Adaptive Intrusion Detection System — Concept Drift & Continual Learning
 
-**Goal:** CICIDS2017 (time ordered) → initial MLP → RBF-MMD warning and ADWIN error monitoring → candidate fine-tuning → class-balanced historical replay + knowledge distillation → gate on fresh held-out labels and historical retention → continued prequential scoring. Optional comparisons: static MLP, ordinary fine-tuning, replay, replay+distillation, Adaptive Random Forest, temporal CNN/LSTM/GRU.
+**Status:** Completed research prototype and exploratory evaluation. **Not** a live intrusion-prevention product.
 
-> This is a **research prototype**, not an operational IDS that can block attacks. The Python scripts analyze labeled network flow CSVs offline as a replayed stream. Do not report synthetic-data numbers as real research results.
+This project replays chronological, labeled network-flow data through an initial multilayer perceptron (MLP) IDS, monitors traffic distribution and prediction errors with **RBF-MMD** and **ADWIN**, and investigates validated model updates using **class-balanced experience replay**, **knowledge distillation**, and historical retention checks. The code analyzes CSV network flows offline; it does not sniff live packets or block traffic.
 
-## A. Environment (Step 1)
+## Research question
 
-Recommend **Python 3.11+**. On Kali/Ubuntu:
+Can drift-triggered continual learning improve attack detection under changing traffic while controlling false positives and retaining previous knowledge? The experiments show gains on one exploratory Thursday stream, but also reveal serious limitations on unseen attack families and rare-attack periods.
 
-```bash
-sudo apt update
-sudo apt install -y python3 python3-venv python3-pip unzip
-cd adaptive_ids_project
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+## Stack
+
+- **OS tested:** Kali Linux; Python virtual environment.
+- **Python tools:** pandas, NumPy, PyTorch, scikit-learn, River (ADWIN / Adaptive Random Forest), matplotlib, joblib, psutil.
+- **Datasets:** CICIDS2017 and CSE-CIC-IDS2018, analyzed as separate experiments because feature schemas differ.
+- **Data handling:** time-ordered samples, train-only imputation/scaling, binary benign/attack labels, prequential batch scoring (predict before labels become available).
+
+## Repository layout
+
+```text
+adaptive_ids_project/
+├── prepare.py                # CICIDS2017 parsing, cleaning and chronological ordering
+├── train.py                  # Initial MLP and train-only preprocessing
+├── model.py                  # MLP, scoring and training helpers
+├── stream.py                 # Initial hybrid MMD + ADWIN IDS
+├── replay.py                 # Class-balanced experience replay buffer
+├── ablation.py               # Static / fine-tune / replay / distillation comparisons
+├── compare.py                # Adaptive Random Forest baseline
+├── compare_deep.py           # CNN / LSTM / GRU baselines
+├── plot.py                   # Initial performance plots
+├── requirements.txt
+└── experiments/cicids2018/
+    ├── prepare2018.py        # Date-specific preparation, separate schema
+    ├── train2018_time.py     # Feb-14 chronological splits and initial model
+    ├── hybrid_trigger_ablation2018.py
+    ├── calibrate_thresholds_feb14.py
+    ├── evaluate_feb22_calibrated2018.py
+    ├── phase5_accumulated_replay2018.py
+    ├── phase5_conservative_replay2018.py
+    └── phase5_candidate_calibration2018.py
 ```
 
-On Windows PowerShell:
+Some later scripts above were created as separate experimental files; confirm they are in `experiments/cicids2018/` before running the corresponding commands. `data/`, `models/`, `results/` and the Python virtual environment are local artifacts rather than prerequisites to commit.
 
-```powershell
-cd adaptive_ids_project
-py -3.11 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-Check packages:
+## Setup and reproducibility
 
 ```bash
-python -c "import torch, river, sklearn, pandas; print('Setup OK', torch.__version__, river.__version__)"
+cd ~/adaptive_ids_project
+source venv/bin/activate
+python --version
+python -c "import torch, river, pandas, sklearn; print('Environment OK')"
 ```
 
-## B. Before actual dataset, run the TEST demo
+The original starter `requirements.txt` pins `river>=0.22,<0.24`, while later experiments were run with **River 0.26.1**. Preserve your actual working environment and capture `python -m pip freeze > environment_freeze.txt` before choosing a public dependency pin. Do not imply the original requirements were verified for every later script.
 
-**The demo is synthetic only**, with a controlled traffic/label change around row 8400. It does not replace CICIDS2017.
+### CICIDS2017 starter pipeline
 
 ```bash
-python demo_data.py
-python prepare.py --raw data/demo --stride 1
+python prepare.py --raw data/raw --stride 10
 python train.py --epochs 8
 python stream.py --batch-size 256
 python ablation.py
 python compare.py
 python compare_deep.py --epochs 4
 python plot.py
-python known_drift_eval.py --points 8400
 ```
 
-`results/hybrid_summary.json`, `results/hybrid_batches.csv`, and `results/performance.png` are produced. If no update is accepted, this is possible under the chosen alarm and validation criteria and is not automatically a software error.
+The `data/raw/` directory must contain the appropriate legitimate CICIDS2017 CSVs first. The starter CICIDS2017 experiment sampled 283,072 labeled flows at stride 10. The original time-series and deep-learning baselines have different training budgets / sample definitions; comparisons are exploratory unless those budgets are controlled.
 
-## C. Now train on REAL CICIDS2017 (Steps 2–4)
+### CSE-CIC-IDS2018 experiment
 
-1. Get `GeneratedLabelledFlows.zip` (NOT `MachineLearningCSV.zip`) via the [official CICIDS2017 site](https://www.unb.ca/cic/datasets/ids-2017.html).
-2. Extract the timestamped CSV files into `data/raw/` (nested folders also work).
-3. Include files from Monday **and** the later days, otherwise the starting training period might contain only benign traffic.
-4. Inspect the printed time range. For original capture, dates should fall in **2017-07-03 through 2017-07-07**. The parser assumes `dayfirst=True`, as with the original dd/mm/yyyy timestamp format. If your dataset is transformed or uses a different date format, fix parsing first.
-
-For a quick starter sample (systematic every 10th row per file, not random shuffle):
+From the repo root:
 
 ```bash
-python prepare.py --raw data/raw --stride 10
+cd experiments/cicids2018
+source ../../venv/bin/activate
+python hybrid_trigger_ablation2018.py --all
+python calibrate_thresholds_feb14.py
+python evaluate_feb22_calibrated2018.py
+python phase5_accumulated_replay2018.py
+python phase5_conservative_replay2018.py
+python phase5_candidate_calibration2018.py
 ```
 
-For full data, if your RAM is sufficient:
+**Prerequisites:** date-specific CSV files, Feb-14-trained `models/preprocessor.joblib`, saved frozen checkpoints, and `data/processed/scaled_data.npz`. The 2018 scripts assume they exist; they cannot be run on a new checkout without preparing data and training or restoring approved checkpoints. In particular, the Feb-22 evaluation expects the Feb-14 development calibration JSON and six saved checkpoints.
 
-```bash
-python prepare.py --raw data/raw --stride 1
-```
+## Dataset split and usage ledger
 
-`data/processed/data_report.json` records the input paths, byte sizes, sample stride, rows, class counts and time range. Keep a copy for your report. Data and feature metadata from other datasets must be preprocessed in their **own** experiments — do not directly concatenate CSE-CIC-IDS2018 or TON_IoT without schema/label alignment.
+| Source | Date / use | Scientific status |
+|---|---|---|
+| CICIDS2017 | July 3–7, sampled chronology | Initial proof-of-concept and exploratory baselines |
+| CSE-CIC-IDS2018 | Feb 14, 2018 | Initial training, historical retention and development calibration |
+| CSE-CIC-IDS2018 | Feb 15, 2018 | Explored streaming, replay, trigger policy and candidate validation |
+| CSE-CIC-IDS2018 | Feb 16 and Feb 21 | Frozen-model diagnostics; subsequently inspected (not suitable as new tests) |
+| CSE-CIC-IDS2018 | Feb 22, 2018 | One-time frozen-model evaluation with preselected Feb-14 thresholds; now inspected |
+| CSE-CIC-IDS2018 | Feb 23, 2018 | Sparse-attack developmental adaptation experiment; now inspected |
 
-## D. Train baseline detector (Step 5)
+No additional unseen-day performance claim is made here. TON_IoT appears in the original research plan but was **not completed as a separate evaluated experiment** in the reported results.
 
-```bash
-python train.py --epochs 8 --train-fraction 0.60 --seed 42
-```
+## Selected experimental results
 
-Chronological protocol:
+**15 February, exploratory prequential stream (5,250 attacks; 410 batches):**
 
-- First **60%** of stream = initial period; first 90% of it used to fit imputation, scaling and model. Its last 10% is a **historical holdout** never used in training.
-- Next **15%** = development period for one-time initial validation, not used as future evaluation samples.
-- Last **25%** = **evaluation stream**; never shuffled and never used to fit the initial scaler or initial model.
+| Trigger | Attack recall | Macro-F1 | Benign FPR | Proposals | Accepted updates |
+|---|---:|---:|---:|---:|---:|
+| AND | 3.37% | 52.01% | ~0.01% | 2 | 1 |
+| ADWIN-only | 24.82% | 66.50% | 0.82% | 7 | 3 |
+| MMD-only | 18.76% | 63.54% | 0.47% | 13 | 3 |
+| OR | **28.51%** | **69.54%** | 0.52% | 17 | 4 |
 
-Save paths: `models/initial_mlp.pt`, `models/preprocessor.joblib`, `models/initial_metrics.json`. If it errors **one class in initial training**, increase the training fraction slightly (e.g. `--train-fraction 0.70`) only while leaving a substantial evaluation stream; inspect the class distribution and report the selected split.
+**22 February, previously uninspected at run time, frozen-model evaluation** (1,048,575 flows; 362 attacks; threshold fixed using Feb-14 development):
 
-## E. Run MMD + ADWIN + adaptation (Steps 6–12)
+| Model | Recall | Attack F1 | Precision | False positives |
+|---|---:|---:|---:|---:|
+| Static MLP | 18.78% | 8.00% | 5.08% | 1,270 |
+| Balanced guarded | 16.30% | 7.46% | 4.84% | 1,160 |
+| AND | 18.78% | 7.73% | 4.87% | 1,329 |
+| ADWIN | 18.78% | 6.84% | 4.18% | 1,559 |
+| MMD | 18.78% | 8.18% | 5.23% | 1,232 |
+| OR | 18.51% | 8.72% | 5.71% | 1,107 |
 
-```bash
-python stream.py --batch-size 256
-```
+**23 February, sparse attack development:** 1,048,575 flows; 566 attacks. The proposed accumulation/conservative/calibration experiments each attempted 19 candidate proposals; none were accepted. The frozen OR and adapted streams therefore had the same observed recall **13.60%**, attack F1 **2.00%**, and benign FPR **0.6743%**. Rejected candidates improved ranking in many windows but had unacceptable false-positive/retention trade-offs.
 
-Algorithm (each consecutive batch):
+## Interpretation and limitations
 
-1. Predict with the incumbent model, store predictions and prediction latency.
-2. Evaluate those predictions with **verified labels available at the end of each batch** (simulated immediate batch-end feedback; not delayed-label evaluation).
-3. RBF-MMD uses 96 flows from a frozen initial reference versus 96 current flows, gamma = reciprocal median squared initial distance; cutoff calibrated from **15 early training samples** (95th percentile × 1.15). MMD alone is **warning only**, not proof of harmful concept drift.
-4. ADWIN (delta `0.002`) consumes 0=correct or 1=incorrect errors one-by-one. A statistically detected change with a **rising** recent error rate counts as a possible concept drift.
-5. Trigger a candidate update only if the ADWIN rising-error event happens within four batches of an MMD warning.
-6. Train on the preceding observed batches + class-balanced **bounded reservoir replay** (at most 250 stored samples per class). Knowledge distillation uses the previous frozen MLP as teacher, student initialized from that model, `T=2`, `20%` distillation loss.
-7. Validate against the latest batch, which is held out of *that* update, and the untouched historical retention set. Require `recent_macro_F1 > incumbent+0.005`, `historical_macro_F1 >= incumbent-0.03`, and historical benign false-positive rate not worse by >0.03. Reject otherwise.
-8. On acceptance, write `models/rollback_mlp.pt` and `models/updated_mlp.pt`. Continue to next batch. Log resource use, prediction and update times.
+- **Distribution shift ≠ confirmed harmful concept drift.** MMD indicates feature-distribution differences; ADWIN monitors observed prediction-error changes after true labels arrive. No ground-truth drift points were supplied for the real datasets, so drift detection delay and drift false-alarm rate are not verified.
+- **Accuracy is misleading on rare attacks.** Report class-specific recall, precision, PR-AUC, F1, benign FPR and confusion counts.
+- **Prequential feedback is optimistic for real operations.** The simulator assumes verified labels at the end of each batch; real networks may have delayed labels.
+- **Threshold drift matters.** Feb-21 HOIC scores were ranked well but often below the fixed 0.50 threshold. Threshold `0.001` was inspected using an earlier test day and is *diagnostic only*, not deployable proof.
+- **Selection bias.** Thursday was repeatedly inspected/tuned. Feb-14 threshold-calibration protocol was designed after other days were inspected. Feb-22 was evaluated once under the fixed protocol, but further tuning on it would remove its independent-test role.
+- **No production guarantee.** No claims of live intrusion prevention, all-attack coverage, or validated novelty over every prior paper.
 
-**Reference policy:** the MMD reference is frozen for the first prototype. **Model policy:** a rejected candidate is discarded. **No ground-truth fabrication:** predicted labels are never treated as verified labels.
+## Results, integrity and GitHub hygiene
 
-## F. Compare methods (Step 13)
+The Kali experiments generated `results/hybrid_trigger_ablation2018_comparison.json`, `results/heldout_22feb_calibrated2018_summary.json`, `results/phase5_feb23_*summary.json`, and charts in `results/final_charts/`. The user verified a snapshot using SHA-256 manifests with all files reporting `OK`.
 
-```bash
-python ablation.py --batch-size 256 --interval 5
-python compare.py --arf-train-limit 0 --arf-test-limit 0
-python compare_deep.py --length 8 --epochs 4
-```
+Keep raw data, model binaries, credentials, virtual environments and oversized artifacts out of Git. Keep a compact `results/README.md` and optionally the sanitized chart PNGs / summary JSONs if their licensing and privacy have been checked. Avoid committing data or results whose provenance cannot be independently verified.
 
-- `ablation.py`: static MLP vs periodic fine-tuning vs replay vs replay+distillation. **These baselines deliberately lack candidate validation**; the full hybrid method additionally requires drift alarms and acceptance checks. They all use prequential evaluation.
-- `compare.py`: River `forest.ARFClassifier`, `learn_one` and `predict_proba_one`. The ARF option is computationally expensive on full datasets. The provided default limits are a fast trial; to report a comparable full-data experiment use both limits 0.
-- `compare_deep.py`: CNN, LSTM, GRU trained on non-overlapping chronological windows of 8 flows, scored on the last flow in each window. An initial MLP is scored on the **same endpoints**. Neighboring flows may belong to different hosts — interpret this as a temporal baseline, not necessarily a host-session model.
-- `stream.py` is the **full hybrid**; compare its `results/hybrid_summary.json` to ablation results, reporting where training budgets/update frequency differ.
+For reproducibility, save: (1) dataset dates, hashes and labels, (2) environment freeze, (3) scripts and configuration values, (4) seed and model checkpoint hashes, and (5) explicit notes for explored-versus-reserved dates.
 
-## G. Produce evaluation outputs (Step 14)
+## References
 
-```bash
-python plot.py
-```
+1. CICIDS2017 — https://www.unb.ca/cic/datasets/ids-2017.html
+2. CSE-CIC-IDS2018 — https://www.unb.ca/cic/datasets/ids-2018.html
+3. Gretton et al. (2012), *A Kernel Two-Sample Test*, JMLR — https://www.jmlr.org/papers/v13/gretton12a.html
+4. Bifet & Gavaldà (2007), *Learning from Time-Changing Data with Adaptive Windowing*, SDM — https://doi.org/10.1137/1.9781611972771.42
+5. Hinton et al. (2015), *Distilling the Knowledge in a Neural Network* — https://arxiv.org/abs/1503.02531
 
-- `results/hybrid_batches.csv`: per-batch precision, recall, F1, macro-F1, PR-AUC (if both labels occur), benign false-positive rate, MMD, ADWIN warnings, attempted/accepted updates, throughput, peak-observed process memory and replay rows.
-- `results/hybrid_summary.json`: whole-stream **prequential** classification metrics, total alarm counts and update count.
-- `results/ablation.json`, `results/comparison.json`, `results/deep_sequence_comparison.json`: extra baselines.
-- `results/performance.png`: performance over time; orange lines are MMD warnings and green dashed lines are accepted updates.
-
-**Very important:** an attack false alarm (benign classified as attack) is not the same as a false **drift** alarm. On unmodified CICIDS2017, the true underlying concept-drift change locations are not annotated, so honest `drift_false_alarm_rate`, `missed_drifts`, `drift_detection_delay`, and `recovery_time` cannot automatically be determined from filename/day changes. Use controlled scenarios with externally known change points. A synthetic smoke-test example:
-
-```bash
-python known_drift_eval.py --points 8400
-```
-
-That last command is only valid after the included synthetic demo, or when you supply an actual documented change point for your own controlled stream. Repeat real experiments with multiple random seeds (e.g. 42/43/44), record variability and compute drift delay/recovery against **known** drift points only.
-
-## File-to-step map
-
-| Steps in `Steps.docx` | Relevant script |
-|---|---|
-| 1 | `requirements.txt`, `README.md` |
-| 2,3,4 | `prepare.py`, `data/processed/` |
-| 5 | `model.py`, `train.py` |
-| 6,7,8 | `stream.py` (`rbf_mmd2`, `calibrate_mmd`, ADWIN, trigger rule) |
-| 9,10 | `stream.py`, `replay.py`, `model.py` |
-| 11 | `stream.py` (`adaptive_update`, acceptance gate, rollback) |
-| 12 | `stream.py` (predict/evaluate/learn order) |
-| 13 | `ablation.py`, `compare.py`, `compare_deep.py` |
-| 14 | `plot.py`, `known_drift_eval.py`, streamed CSV/JSON metrics |
-
-## Cautions and limitations
-
-- Offline flow-based Python replay, **not live packet sniffing**.
-- Current label feedback is assumed available at the **end of a batch**; for realistic delayed labels, add a label-arrival queue before feeding ADWIN/updating the model.
-- MMD estimates **input distribution change**, whereas ADWIN catches **error-rate change**. They are complementary, not interchangeable.
-- Results on different dataset schemas should first be compared as **separate experiments**.
-- The sample stride is intended for rapid prototyping; re-run at stride 1 for a research-quality experiment if practical.
-- CICIDS2017 datasets contain known artifacts/label issues; report the exact source and preprocessing policy and do not overclaim real-world generalization.
-- The provided implementation has a basic test with synthetic data; check all code on your own environment with the real River package and original dataset before publication.
+**Research scope:** an auditable educational prototype to study adaptive detection and failure cases, not a deployed security control.

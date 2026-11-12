@@ -106,6 +106,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch-size', type=int, default=256)
     parser.add_argument('--output-prefix', default='hybrid')
+    parser.add_argument('--mmd-threshold', type=float, default=None)
     args = parser.parse_args()
     if args.batch_size < 64:
         parser.error('--batch-size should be at least 64 for MMD and error monitoring.')
@@ -116,6 +117,10 @@ def main():
     # Full initial fit contains both labels. No use of later data to calibrate.
     X_train, y_train = X[:fit_end], y[:fit_end]
     ref, gamma, threshold = calibrate_mmd(X_train)
+    if args.mmd_threshold is not None:
+        if args.mmd_threshold < 0:
+            parser.error('Threshold must be nonnegative')
+        threshold = args.mmd_threshold
     print(f'MMD calibrated: gamma={gamma:.5f}, warning threshold={threshold:.5f}')
     adwin = drift.ADWIN(delta=0.002)
     error_hist = deque(maxlen=512)

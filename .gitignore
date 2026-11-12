@@ -17,3 +17,20 @@ backups/
 *_backup.py
 .env
 *.zip
+
+# Large datasets and trained checkpoints
+*.csv
+*.parquet
+*.npz
+*.npy
+*.pt
+*.pth
+*.joblib
+*.pkl
+*.log
+
+# Local settings and temporary files
+.env.*
+!.env.example
+.pytest_cache/
+.ipynb_checkpoints/
